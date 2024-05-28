@@ -107,7 +107,7 @@ class QLearning:
 scene = Scene()
 
 # Create the agent
-agent = Agent()
+agent = Agent(state_size=100, action_size=4)
 
 # Create the Q-learning trainer
 trainer = QLearning(scene, agent)
