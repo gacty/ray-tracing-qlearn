@@ -19,12 +19,14 @@ class Scene:
         self.objects.extend(objects)
 
 class Agent:
-    def __init__(self, learning_rate=0.1, discount_factor=0.9, exploration_rate=1.0, exploration_decay=0.99):
+    def __init__(self, state_size, action_size, learning_rate=0.1, discount_factor=0.9, exploration_rate=1.0, exploration_decay=0.99):
+        self.state_size = state_size
+        self.action_size = action_size
         self.learning_rate = learning_rate
         self.discount_factor = discount_factor
         self.exploration_rate = exploration_rate
         self.exploration_decay = exploration_decay
-        self.q_table = {}  # Q-table to store Q-values for state-action pairs
+        self.q_table = np.zeros((state_size, action_size))  # Q-table to store Q-values for state-action pairs
 
     def get_possible_actions(self, state):
         # Define the possible actions based on the state
