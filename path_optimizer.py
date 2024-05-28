@@ -1,12 +1,13 @@
 import random
 import numpy as np
 
-class Scene:
-    def __init__(self):
-        # Define objects, light sources, and relevant parameters
-        # For simplicity, assume a 2D environment with walls and a light source
-        self.objects = [...]  # List of objects
-        self.light_source = (1, 2)  # Coordinates of the light source
+class RayTracingEnv:
+    def __init__(self, grid_size, objects, light_sources):
+        self.grid_size = grid_size
+        self.objects = objects  # List of object coordinates (x, y)
+        self.light_sources = light_sources  # List of light source coordinates (x, y)
+        self.state_size = grid_size * grid_size  # Each cell in the grid is a state
+        self.action_size = 4  # Four possible actions: up, down, left, right
 
     def get_possible_actions(self, current_position):
         # Define the action space (possible directions to move)
