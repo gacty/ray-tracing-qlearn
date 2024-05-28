@@ -105,7 +105,7 @@ class QLearning:
         return -distance_to_light
 
 # Create the environment
-scene = Scene()
+scene = RayTracingEnv()
 
 # Create the agent
 agent = Agent(state_size=100, action_size=4)
