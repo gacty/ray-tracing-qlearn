@@ -2,116 +2,177 @@ import random
 import numpy as np
 
 class RayTracingEnv:
-    def __init__(self, grid_size, objects, light_sources):
+    def __init__(self, grid_size=10, objects=None, light_sources=None):
         self.grid_size = grid_size
-        self.objects = objects  # List of object coordinates (x, y)
-        self.light_sources = light_sources  # List of light source coordinates (x, y)
-        self.state_size = grid_size * grid_size  # Each cell in the grid is a state
-        self.action_size = 4  # Four possible actions: up, down, left, right
+        self.objects = set(objects or [])         # set of (x,y) obstacle coords
+        self.light_sources = set(light_sources or [])  # set of (x,y) light coords
+        self.state_size = grid_size * grid_size
+        self.action_list = [(0, 1), (0, -1), (1, 0), (-1, 0)]  # up, down, right, left
+        # convenience?
+        self._all_coords = [(x, y) for x in range(grid_size) for y in range(grid_size)]
 
-    def get_possible_actions(self, current_position):
-        # Define the action space (possible directions to move)
-        # For example, in 2D, you can move up, down, left, or right
-        actions = [(0, 1), (0, -1), (1, 0), (-1, 0)]  # Move up, down, right, left
-        return actions
+    def in_bounds(self, pos):
+        x, y = pos
+        return 0 <= x < self.grid_size and 0 <= y < self.grid_size
 
-    def insert_objects(self, objects):
-        # Insert objects into the scene
-        self.objects.extend(objects)
+    def is_obstacle(self, pos):
+        return pos in self.objects
+
+    def is_light(self, pos):
+        return pos in self.light_sources
+
+    def coords_to_index(self, pos):
+        x, y = pos
+        return x * self.grid_size + y
+
+    def index_to_coords(self, idx):
+        x = idx // self.grid_size
+        y = idx % self.grid_size
+        return (x, y)
+
+    def get_possible_actions(self, pos):
+        # return indices of actions that lead in-bounds (but we will allow stays for out-of-bounds)
+        possible = []
+        for i, (dx, dy) in enumerate(self.action_list):
+            nx, ny = pos[0] + dx, pos[1] + dy
+            if self.in_bounds((nx, ny)):
+                possible.append(i)
+        return possible
+
+    def random_free_position(self):
+        candidates = [p for p in self._all_coords if p not in self.objects and p not in self.light_sources]
+        return random.choice(candidates) if candidates else (0, 0)
 
 class Agent:
-    def __init__(self, state_size, action_size, learning_rate=0.1, discount_factor=0.9, exploration_rate=1.0, exploration_decay=0.99):
+    def __init__(self, state_size, action_size, learning_rate=0.1, discount_factor=0.9,
+                 exploration_rate=1.0, exploration_decay=0.995, min_exploration=0.01):
         self.state_size = state_size
         self.action_size = action_size
-        self.learning_rate = learning_rate
-        self.discount_factor = discount_factor
-        self.exploration_rate = exploration_rate
-        self.exploration_decay = exploration_decay
-        self.q_table = np.zeros((state_size, action_size))  # Q-table to store Q-values for state-action pairs
+        self.alpha = learning_rate
+        self.gamma = discount_factor
+        self.epsilon = exploration_rate
+        self.epsilon_decay = exploration_decay
+        self.min_epsilon = min_exploration
+        self.q_table = np.zeros((state_size, action_size))
 
-    def get_possible_actions(self, state):
-        # Define the possible actions based on the state
-        # For example, in a 2D environment with walls, the possible actions could be
-        # up, down, left, and right
-        possible_actions = [(0, 1), (0, -1), (1, 0), (-1, 0)]
-        return possible_actions
-
-    def choose_action(self, state, possible_actions):
-        if np.random.rand() < self.exploration_rate:
-            # Explore: choose a random action
-            action = random.choice(possible_actions)
+    def choose_action(self, state_idx, possible_action_indices):
+        # epsilon-greedy over allowed actions
+        if np.random.rand() < self.epsilon:
+            return random.choice(possible_action_indices)
         else:
-            # Exploit: choose the action with the highest Q-value
-            q_values = [self.q_table.get((state, a), 0) for a in possible_actions]
-            action = possible_actions[np.argmax(q_values)]
-        return action
+            # pick best among allowed (break ties randomly)
+            qvals = self.q_table[state_idx, possible_action_indices]
+            max_q = np.max(qvals)
+            best_candidates = [a for a, q in zip(possible_action_indices, qvals) if q == max_q]
+            return random.choice(best_candidates)
 
-    def update_q_table(self, state, action, reward, next_state):
-        # Update Q-value using Q-learning update rule
-        current_q_value = self.q_table.get((state, action), 0)
-        max_next_q_value = max([self.q_table.get((next_state, a), 0) for a in self.get_possible_actions(next_state)])
-        new_q_value = current_q_value + self.learning_rate * (reward + self.discount_factor * max_next_q_value - current_q_value)
-        self.q_table[(state, action)] = new_q_value
+    def update_q_table(self, state_idx, action_idx, reward, next_state_idx, next_possible_actions):
+        current_q = self.q_table[state_idx, action_idx]
+        if next_possible_actions:
+            max_next_q = np.max(self.q_table[next_state_idx, next_possible_actions])
+        else:
+            max_next_q = 0.0
+        new_q = current_q + self.alpha * (reward + self.gamma * max_next_q - current_q)
+        self.q_table[state_idx, action_idx] = new_q
 
     def decay_exploration_rate(self):
-        # Decay exploration rate
-        self.exploration_rate *= self.exploration_decay
+        self.epsilon = max(self.min_epsilon, self.epsilon * self.epsilon_decay)
 
 class QLearning:
-    def __init__(self, environment, agent, num_episodes=1000, max_steps_per_episode=100):
-        self.environment = environment
+    def __init__(self, env, agent, num_episodes=2000, max_steps_per_episode=200):
+        self.env = env
         self.agent = agent
         self.num_episodes = num_episodes
-        self.max_steps_per_episode = max_steps_per_episode
+        self.max_steps = max_steps_per_episode
+
+    def calculate_reward(self, pos):
+        # Terminal: reaching light
+        if self.env.is_light(pos):
+            return 100.0, True
+        if self.env.is_obstacle(pos):
+            return -100.0, True
+        # Otherwise shaped reward: -1 per step and negative Euclidean distance (encourage moving toward light)
+        # Use the closest light source distance (if multiple)
+        if self.env.light_sources:
+            dists = [np.linalg.norm(np.array(pos) - np.array(ls)) for ls in self.env.light_sources]
+            distance = min(dists)
+        else:
+            distance = 0.0
+        return -1.0 - 0.1 * distance, False
 
     def train(self):
-        for episode in range(self.num_episodes):
-            state = self.get_initial_state()
-            total_reward = 0
+        for ep in range(1, self.num_episodes + 1):
+            start = self.env.random_free_position()
+            state_idx = self.env.coords_to_index(start)
+            total_reward = 0.0
 
-            for step in range(self.max_steps_per_episode):
-                possible_actions = self.environment.get_possible_actions(state)
-                action = self.agent.choose_action(state, possible_actions)
-                next_state, reward = self.take_action(state, action)
-                self.agent.update_q_table(state, action, reward, next_state)
+            for step in range(self.max_steps):
+                pos = self.env.index_to_coords(state_idx)
+                possible_actions = self.env.get_possible_actions(pos)
+                if not possible_actions:
+                    # stuck (rare) — end episode
+                    break
+                action_idx = self.agent.choose_action(state_idx, possible_actions)
+                dx, dy = self.env.action_list[action_idx]
+                next_pos = (pos[0] + dx, pos[1] + dy)
+
+                # safety: if next_pos is out-of-bounds, treat as staying in place with small penalty
+                if not self.env.in_bounds(next_pos):
+                    next_pos = pos
+
+                next_state_idx = self.env.coords_to_index(next_pos)
+                reward, done = self.calculate_reward(next_pos)
+
+                next_possible_actions = self.env.get_possible_actions(next_pos)
+                self.agent.update_q_table(state_idx, action_idx, reward, next_state_idx, next_possible_actions)
+
                 total_reward += reward
-                state = next_state
+                state_idx = next_state_idx
+
+                if done:
+                    break
 
             self.agent.decay_exploration_rate()
 
-            if episode % 100 == 0:
-                print(f"Episode {episode}, Total Reward: {total_reward}")
+            if ep % 100 == 0 or ep == 1:
+                print(f"Episode {ep:4d} / {self.num_episodes:4d}  epsilon={self.agent.epsilon:.4f}  total_reward={total_reward:.2f}")
 
-    def get_initial_state(self):
-        # Define the initial state (starting position)
-        # For simplicity, let's start at a random position
-        return (random.randint(0, 10), random.randint(0, 20))
+    def run_greedy_episode(self, start=None, max_steps=200):
+        if start is None:
+            start = self.env.random_free_position()
+        state_idx = self.env.coords_to_index(start)
+        path = [start]
+        for _ in range(max_steps):
+            pos = self.env.index_to_coords(state_idx)
+            possible = self.env.get_possible_actions(pos)
+            if not possible:
+                break
+            action_idx = self.agent.choose_action(state_idx, possible)  # epsilon might be low; for pure greedy set epsilon=0
+            dx, dy = self.env.action_list[action_idx]
+            next_pos = (pos[0] + dx, pos[1] + dy)
+            if not self.env.in_bounds(next_pos):
+                break
+            path.append(next_pos)
+            if self.env.is_light(next_pos) or self.env.is_obstacle(next_pos):
+                break
+            state_idx = self.env.coords_to_index(next_pos)
+        return path
 
-    def take_action(self, state, action):
-        # Update the ray's position based on the chosen action
-        new_position = (state[0] + action[0], state[1] + action[1])
+if __name__ == "__main__":
+    grid = 10
+    obstacles = [(3,3),(3,4),(3,5),(4,5),(5,5),(6,5)]
+    lights = [(9,9)]
+    env = RayTracingEnv(grid_size=grid, objects=obstacles, light_sources=lights)
 
-        # Calculate the reward based on the new state
-        reward = self.calculate_reward(new_position)
+    agent = Agent(state_size=env.state_size, action_size=len(env.action_list),
+                  learning_rate=0.2, discount_factor=0.95,
+                  exploration_rate=1.0, exploration_decay=0.995, min_exploration=0.01)
 
-        # Return the next state and reward
-        return new_position, reward
+    qlearn = QLearning(env, agent, num_episodes=1200, max_steps_per_episode=200)
+    qlearn.train()
 
-    def calculate_reward(self, position):
-        # Implement a reward function that encourages the agent to move towards the light source and avoid obstacles
-        # For simplicity, we use the distance to the light source as the reward
-        light_source = self.environment.light_source
-        distance_to_light = np.linalg.norm(np.array(position) - np.array(light_source))
-        return -distance_to_light
-
-# Create the environment
-scene = RayTracingEnv()
-
-# Create the agent
-agent = Agent(state_size=100, action_size=4)
-
-# Create the Q-learning trainer
-trainer = QLearning(scene, agent)
-
-# Train the agent
-trainer.train()
+    # inspect a greedy trajectory after training
+    start = (0,0)
+    agent.epsilon = 0.0  # force greedy
+    path = qlearn.run_greedy_episode(start=start, max_steps=200)
+    print("Greedy path from", start, ":", path)
